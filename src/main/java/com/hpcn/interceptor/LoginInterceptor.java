@@ -1,34 +1,34 @@
 package com.hpcn.interceptor;
 
+import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.util.StrUtil;
 import com.hpcn.dto.UserDTO;
 import com.hpcn.entity.User;
 import com.hpcn.utils.UserHolder;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import static com.hpcn.utils.RedisConstants.LOGIN_USER_KEY;
+import static com.hpcn.utils.RedisConstants.LOGIN_USER_TTL;
+
 public class LoginInterceptor implements HandlerInterceptor {
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 1， 获取 Session 以及 Session中的用户
-        HttpSession session = request.getSession();
-        Object user = session.getAttribute("user");
-        // 2， 判断用户是否存在
-        if (user == null) {
-            // 不存在
+        // 判断 ThreadLocal中是否有用户
+        if (UserHolder.getUser() == null) {
             response.setStatus(401);
             return false;
         }
-        // 3， 存在，保存信息到ThreadLocal中
-        UserHolder.saveUser((UserDTO) user);
-        return true;
-    }
 
-    @Override
-    public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) throws Exception {
-        // 移除 ThreadLocal
-        UserHolder.removeUser();
+        // 有用户，则放行
+        return true;
     }
 }

@@ -1,6 +1,8 @@
 package com.hpcn.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.bean.copier.CopyOptions;
+import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hpcn.dto.LoginFormDTO;
@@ -17,9 +19,11 @@ import org.springframework.stereotype.Service;
 import javax.annotation.Resource;
 import javax.servlet.http.HttpSession;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static com.hpcn.utils.RedisConstants.LOGIN_CODE_KEY;
+import static com.hpcn.utils.RedisConstants.*;
 import static com.hpcn.utils.SystemConstants.USER_NICK_NAME_PREFIX;
 
 /**
@@ -46,10 +50,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 3, 符合则生成验证码
         String code = RandomUtil.randomNumbers(6);
 
-        // 4, 保存验证码到Session
-        session.setAttribute(phone, code);
         // 4, 保存验证码到 Redis 并设置有效期
-//        stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code, 5, TimeUnit.MINUTES);
+        stringRedisTemplate.opsForValue().set(LOGIN_CODE_KEY + phone, code, LOGIN_CODE_TTL, TimeUnit.MINUTES);
 
         // 5, 发送验证码 (模拟发送，可通过阿里云、腾讯云注册短信服务)
         log.debug("发送验证码：{}", code);
@@ -65,10 +67,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (RegexUtils.isPhoneInvalid(phone)) {
             return Result.fail("手机号格式错误！");
         }
-        // 2， 校验验证码
-        Object sessionCode = session.getAttribute(phone);
+        // 2， 从Redis获取验证码并校验
+        Object redisCode = stringRedisTemplate.opsForValue().get(LOGIN_CODE_KEY + phone);
         String loginCode = loginForm.getCode();
-        if (sessionCode == null || !sessionCode.toString().equals(loginCode)){
+        if (redisCode == null || !redisCode.toString().equals(loginCode)){
             return Result.fail("验证码错误");
         }
         // 3， 校验通过，根据手机号到数据库查询用户
@@ -79,12 +81,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             user = createAndSaveUserWithPhone(phone);
         }
 
-        // 6, 保存信息到Session中
-//        session.setAttribute("user", user);
-        session.setAttribute("user", BeanUtil.copyProperties(user, UserDTO.class));
+        // 生成Token，保存信息到 Redis中，并设置有效期
+        String token = UUID.randomUUID().toString(true);
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        // 转Map格式, 注意 UserDTO 中存在一个 Long 类型的属性，必须转换为 String 类型（StringRedisTemplate的要求）
+        Map<String, Object> userMap = BeanUtil.beanToMap(userDTO, new HashMap<>(),
+                CopyOptions.create()
+                        .setIgnoreNullValue(true)
+                        .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString()));
+        String tokenKey = LOGIN_USER_KEY + token;
+        // 存入Redis
+        stringRedisTemplate.opsForHash().putAll(tokenKey, userMap);
+        // 设置有效期
+        stringRedisTemplate.expire(tokenKey, LOGIN_USER_TTL, TimeUnit.MINUTES);
 
-        // 返回ok
-        return Result.ok();
+        // 返回token
+        return Result.ok(token);
     }
 
     /**
